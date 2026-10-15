@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">RandomCam</string>
+    <string name="app_tagline">Live Random Video Chat</string>
+    <string name="find_match">Find Match</string>
+    <string name="searching_strangers">Searching for someone new…</string>
+    <string name="skip_next">Next</string>
+    <string name="stop_chat">Leave</string>
+    <string name="connected_stranger">Stranger Connected</string>
+    <string name="server_settings">Signaling Server Settings</string>
+    <string name="socket_url">Socket.io URL</string>
+    <string name="camera_permission_required">Camera and microphone access are required for video chat</string>
+    <string name="grant_permission">Enable Camera &amp; Mic</string>
+    <string name="type_a_message">Send a message…</string>
+</resources>

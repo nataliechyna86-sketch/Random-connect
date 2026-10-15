@@ -1,0 +1,6 @@
+{
+  "name": "RandomCam",
+  "description": "Live random video chat matching strangers worldwide via Socket.IO and WebRTC",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
