@@ -15,6 +15,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Debug APK
@@ -33,7 +36,7 @@ jobs:
       - name: Accept Android SDK Licenses & Install Components
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "platform-tools" || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platforms;android-35" "build-tools;36.0.0" "platform-tools" || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -64,11 +67,27 @@ jobs:
       - name: Run Unit Tests (Optional Verification)
         run: ./gradlew testDebugUnitTest --stacktrace || true
 
+      - name: Prepare APK Artifacts
+        run: |
+          mkdir -p release-output
+          cp app/build/outputs/apk/debug/app-debug.apk release-output/RandomCam-debug.apk
+
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         if: success()
         with:
           name: RandomCam-Debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: release-output/RandomCam-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Create or Update GitHub Release
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest Debug Build"
+          body: "Direct download of RandomCam debug APK. Download `RandomCam-debug.apk` directly onto your Android device to install."
+          files: release-output/RandomCam-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
