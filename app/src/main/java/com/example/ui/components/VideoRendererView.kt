@@ -46,6 +46,7 @@ import com.example.ui.theme.TextSecondary
 import com.example.webrtc.WebRtcManager
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
 fun LocalVideoSurfaceView(
@@ -53,8 +54,10 @@ fun LocalVideoSurfaceView(
     isVideoOff: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val localTrack by webRtcManager.localVideoTrackState.collectAsStateWithLifecycle()
+
     Box(modifier = modifier) {
-        if (!isVideoOff) {
+        if (!isVideoOff && localTrack != null) {
             AndroidView(
                 factory = { ctx ->
                     SurfaceViewRenderer(ctx).apply {
@@ -64,11 +67,11 @@ fun LocalVideoSurfaceView(
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         webRtcManager.setupSurfaceRenderer(this, isMirror = true)
-                        webRtcManager.localVideoTrack?.addSink(this)
+                        localTrack?.addSink(this)
                     }
                 },
                 update = { renderer ->
-                    webRtcManager.localVideoTrack?.let { track ->
+                    localTrack?.let { track ->
                         try {
                             track.removeSink(renderer)
                             track.addSink(renderer)
@@ -77,7 +80,7 @@ fun LocalVideoSurfaceView(
                 },
                 onRelease = { renderer ->
                     try {
-                        webRtcManager.localVideoTrack?.removeSink(renderer)
+                        localTrack?.removeSink(renderer)
                         renderer.release()
                     } catch (_: Exception) {}
                 },
@@ -107,7 +110,7 @@ fun RemoteVideoSurfaceView(
     stranger: StrangerInfo?,
     modifier: Modifier = Modifier
 ) {
-    val remoteTrack = webRtcManager.remoteVideoTrack
+    val remoteTrack by webRtcManager.remoteVideoTrackState.collectAsStateWithLifecycle()
 
     Box(modifier = modifier) {
         if (remoteTrack != null) {
@@ -120,11 +123,11 @@ fun RemoteVideoSurfaceView(
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         webRtcManager.setupSurfaceRenderer(this, isMirror = false)
-                        remoteTrack.addSink(this)
+                        remoteTrack?.addSink(this)
                     }
                 },
                 update = { renderer ->
-                    webRtcManager.remoteVideoTrack?.let { track ->
+                    remoteTrack?.let { track ->
                         try {
                             track.removeSink(renderer)
                             track.addSink(renderer)
@@ -133,14 +136,14 @@ fun RemoteVideoSurfaceView(
                 },
                 onRelease = { renderer ->
                     try {
-                        webRtcManager.remoteVideoTrack?.removeSink(renderer)
+                        remoteTrack?.removeSink(renderer)
                         renderer.release()
                     } catch (_: Exception) {}
                 },
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            // Live Stranger Video Canvas Stream with animated ambient waves
+            // Live Stranger Video Canvas Stream with animated ambient waves while connecting
             LiveStrangerCanvas(stranger = stranger)
         }
     }

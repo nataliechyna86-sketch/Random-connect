@@ -64,6 +64,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var timerJob: Job? = null
     private var isLocalMediaStarted = false
 
+    private var currentCallRoomId: String? = null
+
     init {
         setupSignalingCallbacks(sandboxClient)
         setupSignalingCallbacks(socketClient)
@@ -110,6 +112,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         client.onMatched = { roomId, stranger, isInitiator ->
             stopTimer()
+            currentCallRoomId = roomId
             _matchState.update { MatchState.Connecting(roomId, stranger) }
 
             // WebRTC peer setup
@@ -133,6 +136,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         client.onOfferReceived = { roomId, sdp ->
+            currentCallRoomId = roomId
+            webRtcManager.createPeerConnection()
             webRtcManager.handleOffer(sdp) { answerSdp ->
                 activeSignaling.sendAnswer(roomId, answerSdp.description)
             }
@@ -156,6 +161,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         client.onPartnerDisconnected = { reason ->
             stopTimer()
+            currentCallRoomId = null
             webRtcManager.closePeerConnection()
             val currentStranger = (_matchState.value as? MatchState.Connected)?.stranger
             _matchState.update { MatchState.Disconnected(reason, currentStranger) }
@@ -164,14 +170,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun setupWebRtcCallbacks() {
         webRtcManager.onIceCandidateGenerated = { candidate ->
-            val currentState = _matchState.value
-            if (currentState is MatchState.Connected) {
+            val roomId = currentCallRoomId
+                ?: (matchState.value as? MatchState.Connected)?.roomId
+                ?: (matchState.value as? MatchState.Connecting)?.roomId
+
+            if (!roomId.isNullOrEmpty()) {
+                Log.d(TAG, "Sending generated ICE candidate for room: $roomId")
                 activeSignaling.sendIceCandidate(
-                    currentState.roomId,
+                    roomId,
                     candidate.sdpMid ?: "",
                     candidate.sdpMLineIndex,
                     candidate.sdp
                 )
+            } else {
+                Log.w(TAG, "Dropped candidate: no active roomId found")
             }
         }
     }
@@ -205,6 +217,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun skipStranger() {
         stopTimer()
+        currentCallRoomId = null
         val current = _matchState.value
         val roomId = when (current) {
             is MatchState.Connected -> current.roomId
@@ -225,6 +238,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun leaveChat() {
         stopTimer()
+        currentCallRoomId = null
         val current = _matchState.value
         val roomId = when (current) {
             is MatchState.Connected -> current.roomId

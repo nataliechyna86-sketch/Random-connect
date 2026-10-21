@@ -119,11 +119,17 @@ class SocketSignalingClient : SignalingClient {
                     val data = args.firstOrNull() as? JSONObject
                     if (data != null) {
                         val roomId = data.optString("roomId")
-                        val candidate = data.optString("candidate")
+                        val candidate = if (data.has("candidate") && data.optString("candidate").isNotEmpty()) {
+                            data.optString("candidate")
+                        } else {
+                            data.optString("sdp")
+                        }
                         val sdpMid = data.optString("sdpMid", "")
                         val sdpMLineIndex = data.optInt("sdpMLineIndex", 0)
-                        mainHandler.post {
-                            onIceCandidateReceived?.invoke(roomId, sdpMid, sdpMLineIndex, candidate)
+                        if (candidate.isNotEmpty()) {
+                            mainHandler.post {
+                                onIceCandidateReceived?.invoke(roomId, sdpMid, sdpMLineIndex, candidate)
+                            }
                         }
                     }
                 }
@@ -200,6 +206,7 @@ class SocketSignalingClient : SignalingClient {
         val payload = JSONObject().apply {
             put("roomId", roomId)
             put("candidate", sdp)
+            put("sdp", sdp)
             put("sdpMid", sdpMid)
             put("sdpMLineIndex", sdpMLineIndex)
             put("senderId", myUserId)

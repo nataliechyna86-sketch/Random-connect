@@ -176,12 +176,15 @@ io.on("connection", (socket) => {
 
   // ICE Candidate
   socket.on("ice_candidate", (data) => {
-    if (!data || !data.roomId || !data.sdp) return;
+    if (!data || !data.roomId) return;
+    const candidateStr = data.candidate || data.sdp;
+    if (!candidateStr) return;
     socket.to(data.roomId).emit("ice_candidate", {
       roomId: data.roomId,
-      sdpMid: data.sdpMid,
-      sdpMLineIndex: data.sdpMLineIndex,
-      sdp: data.sdp
+      sdpMid: data.sdpMid || "",
+      sdpMLineIndex: data.sdpMLineIndex != null ? data.sdpMLineIndex : 0,
+      candidate: candidateStr,
+      sdp: candidateStr
     });
   });
 

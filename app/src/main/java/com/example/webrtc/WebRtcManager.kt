@@ -23,6 +23,9 @@ import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoCapturer
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 private const val TAG = "WebRtcManager"
 
@@ -38,12 +41,25 @@ class WebRtcManager(private val context: Context) {
     private var videoSource: VideoSource? = null
     private var audioSource: AudioSource? = null
 
-    var localVideoTrack: VideoTrack? = null
-        private set
+    private val _localVideoTrackState = MutableStateFlow<VideoTrack?>(null)
+    val localVideoTrackState: StateFlow<VideoTrack?> = _localVideoTrackState.asStateFlow()
+
+    private val _remoteVideoTrackState = MutableStateFlow<VideoTrack?>(null)
+    val remoteVideoTrackState: StateFlow<VideoTrack?> = _remoteVideoTrackState.asStateFlow()
+
+    var localVideoTrack: VideoTrack?
+        get() = _localVideoTrackState.value
+        private set(value) { _localVideoTrackState.value = value }
+
     var localAudioTrack: AudioTrack? = null
         private set
-    var remoteVideoTrack: VideoTrack? = null
-        private set
+
+    var remoteVideoTrack: VideoTrack?
+        get() = _remoteVideoTrackState.value
+        private set(value) { _remoteVideoTrackState.value = value }
+
+    private val queuedRemoteCandidates = mutableListOf<IceCandidate>()
+    private var isRemoteDescriptionSet = false
 
     private var isFrontCamera = true
     private var isMuted = false
@@ -176,7 +192,10 @@ class WebRtcManager(private val context: Context) {
         val iceServers = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
+            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun3.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun4.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun.relay.metered.ca:80").createIceServer()
         )
 
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
@@ -185,7 +204,9 @@ class WebRtcManager(private val context: Context) {
         }
 
         val observer = object : PeerConnection.Observer {
-            override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
+            override fun onSignalingChange(state: PeerConnection.SignalingState?) {
+                Log.d(TAG, "Signaling State: $state")
+            }
 
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                 Log.d(TAG, "ICE Connection State: $state")
@@ -193,11 +214,13 @@ class WebRtcManager(private val context: Context) {
 
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
 
-            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
+            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
+                Log.d(TAG, "ICE Gathering State: $state")
+            }
 
             override fun onIceCandidate(candidate: IceCandidate?) {
                 candidate?.let {
-                    Log.d(TAG, "Generated ICE Candidate: ${it.sdpMid}")
+                    Log.d(TAG, "Generated ICE Candidate: ${it.sdpMid} -> ${it.sdp}")
                     onIceCandidateGenerated?.invoke(it)
                 }
             }
@@ -205,7 +228,9 @@ class WebRtcManager(private val context: Context) {
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
 
             override fun onAddStream(stream: MediaStream?) {
+                Log.d(TAG, "onAddStream called: ${stream?.id}")
                 stream?.videoTracks?.firstOrNull()?.let { track ->
+                    Log.d(TAG, "Found VideoTrack from stream: ${track.id()}")
                     remoteVideoTrack = track
                     onRemoteTrackReceived?.invoke(track)
                 }
@@ -217,10 +242,18 @@ class WebRtcManager(private val context: Context) {
 
             override fun onRenegotiationNeeded() {}
 
-            override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {}
+            override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {
+                val track = receiver?.track()
+                Log.d(TAG, "onAddTrack called: ${track?.kind()} id: ${track?.id()}")
+                if (track is VideoTrack) {
+                    remoteVideoTrack = track
+                    onRemoteTrackReceived?.invoke(track)
+                }
+            }
 
             override fun onTrack(transceiver: RtpTransceiver?) {
                 val track = transceiver?.receiver?.track()
+                Log.d(TAG, "onTrack called: ${track?.kind()} id: ${track?.id()}")
                 if (track is VideoTrack) {
                     remoteVideoTrack = track
                     onRemoteTrackReceived?.invoke(track)
@@ -228,15 +261,17 @@ class WebRtcManager(private val context: Context) {
             }
 
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
+                Log.d(TAG, "PeerConnection State: $newState")
                 newState?.let { onConnectionStateChanged?.invoke(it) }
             }
         }
 
         peerConnection = factory.createPeerConnection(rtcConfig, observer)
 
-        // Add local tracks
-        localVideoTrack?.let { peerConnection?.addTrack(it) }
-        localAudioTrack?.let { peerConnection?.addTrack(it) }
+        // Add local tracks with explicit stream label for Unified Plan
+        val streamIds = listOf("ARDAMS")
+        localVideoTrack?.let { peerConnection?.addTrack(it, streamIds) }
+        localAudioTrack?.let { peerConnection?.addTrack(it, streamIds) }
     }
 
     fun createOffer(onOfferCreated: (SessionDescription) -> Unit) {
@@ -265,6 +300,7 @@ class WebRtcManager(private val context: Context) {
 
         pc.setRemoteDescription(object : SdpObserverAdapter("setRemoteOffer") {
             override fun onSetSuccess() {
+                drainQueuedCandidates()
                 val constraints = MediaConstraints().apply {
                     mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
                     mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
@@ -287,12 +323,35 @@ class WebRtcManager(private val context: Context) {
     fun handleAnswer(answerSdp: String) {
         val pc = peerConnection ?: return
         val sdp = SessionDescription(SessionDescription.Type.ANSWER, answerSdp)
-        pc.setRemoteDescription(SdpObserverAdapter("setRemoteAnswer"), sdp)
+        pc.setRemoteDescription(object : SdpObserverAdapter("setRemoteAnswer") {
+            override fun onSetSuccess() {
+                drainQueuedCandidates()
+            }
+        }, sdp)
     }
 
     fun addRemoteIceCandidate(sdpMid: String, sdpMLineIndex: Int, sdp: String) {
         val candidate = IceCandidate(sdpMid, sdpMLineIndex, sdp)
-        peerConnection?.addIceCandidate(candidate)
+        val pc = peerConnection
+        if (pc != null && isRemoteDescriptionSet && pc.remoteDescription != null) {
+            Log.d(TAG, "Adding remote ICE candidate: $sdpMid")
+            pc.addIceCandidate(candidate)
+        } else {
+            Log.d(TAG, "Queuing ICE candidate (remote description not ready yet): $sdpMid")
+            queuedRemoteCandidates.add(candidate)
+        }
+    }
+
+    private fun drainQueuedCandidates() {
+        isRemoteDescriptionSet = true
+        val pc = peerConnection ?: return
+        if (queuedRemoteCandidates.isNotEmpty()) {
+            Log.d(TAG, "Draining ${queuedRemoteCandidates.size} queued ICE candidates")
+            for (candidate in queuedRemoteCandidates) {
+                pc.addIceCandidate(candidate)
+            }
+            queuedRemoteCandidates.clear()
+        }
     }
 
     fun setupSurfaceRenderer(renderer: SurfaceViewRenderer, isMirror: Boolean) {
@@ -308,6 +367,8 @@ class WebRtcManager(private val context: Context) {
 
     fun closePeerConnection() {
         try {
+            isRemoteDescriptionSet = false
+            queuedRemoteCandidates.clear()
             peerConnection?.close()
             peerConnection = null
             remoteVideoTrack = null
