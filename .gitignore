@@ -18,3 +18,5 @@ local.properties
 debug.keystore
 .build-outputs/
 *.apk
+node_modules/
+server/node_modules/
