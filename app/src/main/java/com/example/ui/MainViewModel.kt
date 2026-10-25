@@ -137,7 +137,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         client.onOfferReceived = { roomId, sdp ->
             currentCallRoomId = roomId
-            webRtcManager.createPeerConnection()
+            if (!webRtcManager.isPeerConnectionActive) {
+                webRtcManager.createPeerConnection()
+            }
             webRtcManager.handleOffer(sdp) { answerSdp ->
                 activeSignaling.sendAnswer(roomId, answerSdp.description)
             }

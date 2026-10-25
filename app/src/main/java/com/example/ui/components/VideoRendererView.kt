@@ -66,17 +66,15 @@ fun LocalVideoSurfaceView(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
+                        // Critical: PIP overlay must be on top of the remote video SurfaceView
+                        setZOrderMediaOverlay(true)
+                        setZOrderOnTop(true)
                         webRtcManager.setupSurfaceRenderer(this, isMirror = true)
                         localTrack?.addSink(this)
                     }
                 },
                 update = { renderer ->
-                    localTrack?.let { track ->
-                        try {
-                            track.removeSink(renderer)
-                            track.addSink(renderer)
-                        } catch (_: Exception) {}
-                    }
+                    renderer.setMirror(true)
                 },
                 onRelease = { renderer ->
                     try {
@@ -122,17 +120,14 @@ fun RemoteVideoSurfaceView(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
+                        // Background full-screen surface
+                        setZOrderMediaOverlay(false)
                         webRtcManager.setupSurfaceRenderer(this, isMirror = false)
                         remoteTrack?.addSink(this)
                     }
                 },
                 update = { renderer ->
-                    remoteTrack?.let { track ->
-                        try {
-                            track.removeSink(renderer)
-                            track.addSink(renderer)
-                        } catch (_: Exception) {}
-                    }
+                    renderer.setMirror(false)
                 },
                 onRelease = { renderer ->
                     try {

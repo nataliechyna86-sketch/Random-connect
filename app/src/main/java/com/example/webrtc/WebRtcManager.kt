@@ -4,7 +4,9 @@ import android.content.Context
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
+import org.webrtc.Camera1Enumerator
 import org.webrtc.Camera2Enumerator
+import org.webrtc.CameraEnumerator
 import org.webrtc.CameraVideoCapturer
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
@@ -23,6 +25,7 @@ import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoCapturer
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
+import org.webrtc.audio.JavaAudioDeviceModule
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +35,7 @@ private const val TAG = "WebRtcManager"
 class WebRtcManager(private val context: Context) {
 
     val eglBase: EglBase by lazy { EglBase.create() }
+    val appAudioManager by lazy { AppAudioManager(context) }
 
     private var peerConnectionFactory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
@@ -57,6 +61,9 @@ class WebRtcManager(private val context: Context) {
     var remoteVideoTrack: VideoTrack?
         get() = _remoteVideoTrackState.value
         private set(value) { _remoteVideoTrackState.value = value }
+
+    val isPeerConnectionActive: Boolean
+        get() = peerConnection != null
 
     private val queuedRemoteCandidates = mutableListOf<IceCandidate>()
     private var isRemoteDescriptionSet = false
@@ -87,73 +94,147 @@ class WebRtcManager(private val context: Context) {
         val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
-        peerConnectionFactory = PeerConnectionFactory.builder()
+        val audioDeviceModule = try {
+            JavaAudioDeviceModule.builder(context)
+                .setUseHardwareAcousticEchoCanceler(true)
+                .setUseHardwareNoiseSuppressor(true)
+                .createAudioDeviceModule()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing JavaAudioDeviceModule", e)
+            null
+        }
+
+        val factoryBuilder = PeerConnectionFactory.builder()
             .setOptions(options)
             .setVideoEncoderFactory(encoderFactory)
             .setVideoDecoderFactory(decoderFactory)
-            .createPeerConnectionFactory()
+
+        audioDeviceModule?.let {
+            factoryBuilder.setAudioDeviceModule(it)
+        }
+
+        peerConnectionFactory = factoryBuilder.createPeerConnectionFactory()
     }
 
     fun startLocalMedia() {
         val factory = peerConnectionFactory ?: return
 
         // Initialize Audio
-        try {
-            val audioConstraints = MediaConstraints().apply {
-                mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+        if (localAudioTrack == null) {
+            try {
+                val audioConstraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                }
+                audioSource = factory.createAudioSource(audioConstraints)
+                localAudioTrack = factory.createAudioTrack("ARDAMSa0", audioSource).apply {
+                    setEnabled(!isMuted)
+                }
+                Log.d(TAG, "Local audio track created")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error initializing local audio", e)
             }
-            audioSource = factory.createAudioSource(audioConstraints)
-            localAudioTrack = factory.createAudioTrack("ARDAMSa0", audioSource).apply {
-                setEnabled(!isMuted)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing local audio", e)
         }
 
         // Initialize Video
-        try {
-            videoCapturer = createCameraCapturer()
-            if (videoCapturer != null) {
-                surfaceTextureHelper = SurfaceTextureHelper.create("WebRtcCaptureThread", eglBase.eglBaseContext)
-                videoSource = factory.createVideoSource(videoCapturer!!.isScreencast)
-                videoCapturer?.initialize(surfaceTextureHelper, context, videoSource?.capturerObserver)
-                videoCapturer?.startCapture(640, 480, 30)
-
-                localVideoTrack = factory.createVideoTrack("ARDAMSv0", videoSource).apply {
-                    setEnabled(isVideoEnabled)
+        if (localVideoTrack == null) {
+            try {
+                if (videoCapturer == null) {
+                    videoCapturer = createCameraCapturer()
                 }
+
+                if (videoCapturer != null) {
+                    surfaceTextureHelper = SurfaceTextureHelper.create("WebRtcCaptureThread", eglBase.eglBaseContext)
+                    videoSource = factory.createVideoSource(videoCapturer!!.isScreencast)
+                    videoCapturer?.initialize(surfaceTextureHelper, context, videoSource?.capturerObserver)
+                    
+                    try {
+                        videoCapturer?.startCapture(640, 480, 30)
+                        Log.d(TAG, "Camera capture started at 640x480@30fps")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed 640x480@30, fallback to 480x360@24", e)
+                        try {
+                            videoCapturer?.startCapture(480, 360, 24)
+                            Log.d(TAG, "Camera capture started at 480x360@24fps")
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Camera startCapture failed completely", e2)
+                        }
+                    }
+
+                    localVideoTrack = factory.createVideoTrack("ARDAMSv0", videoSource).apply {
+                        setEnabled(isVideoEnabled)
+                    }
+                    Log.d(TAG, "Local video track created successfully")
+                } else {
+                    Log.e(TAG, "videoCapturer is null, cannot start local video")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error initializing camera video capturer", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing camera video capturer", e)
         }
     }
 
     private fun createCameraCapturer(): VideoCapturer? {
-        val enumerator = Camera2Enumerator(context)
-        val deviceNames = enumerator.deviceNames
+        val enumerator: CameraEnumerator = try {
+            if (Camera2Enumerator.isSupported(context)) {
+                Log.d(TAG, "Using Camera2Enumerator")
+                Camera2Enumerator(context)
+            } else {
+                Log.d(TAG, "Camera2 not supported, falling back to Camera1Enumerator")
+                Camera1Enumerator(true)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking Camera2 support, using Camera1Enumerator", e)
+            Camera1Enumerator(true)
+        }
 
-        // Look for front camera first
+        val deviceNames = enumerator.deviceNames
+        Log.d(TAG, "Available camera devices: ${deviceNames.joinToString()}")
+
+        // 1. Look for front camera first
         for (deviceName in deviceNames) {
             if (enumerator.isFrontFacing(deviceName)) {
-                val capturer = enumerator.createCapturer(deviceName, null)
-                if (capturer != null) {
-                    isFrontCamera = true
-                    return capturer
+                try {
+                    val capturer = enumerator.createCapturer(deviceName, null)
+                    if (capturer != null) {
+                        isFrontCamera = true
+                        Log.d(TAG, "Created front camera capturer for $deviceName")
+                        return capturer
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to create front capturer for $deviceName", e)
                 }
             }
         }
 
-        // Fallback to back camera
+        // 2. Fallback to back camera
         for (deviceName in deviceNames) {
             if (enumerator.isBackFacing(deviceName)) {
+                try {
+                    val capturer = enumerator.createCapturer(deviceName, null)
+                    if (capturer != null) {
+                        isFrontCamera = false
+                        Log.d(TAG, "Created back camera capturer for $deviceName")
+                        return capturer
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to create back capturer for $deviceName", e)
+                }
+            }
+        }
+
+        // 3. Fallback to any camera available
+        for (deviceName in deviceNames) {
+            try {
                 val capturer = enumerator.createCapturer(deviceName, null)
                 if (capturer != null) {
-                    isFrontCamera = false
+                    Log.d(TAG, "Created fallback camera capturer for $deviceName")
                     return capturer
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to create fallback capturer for $deviceName", e)
             }
         }
 
@@ -229,6 +310,11 @@ class WebRtcManager(private val context: Context) {
 
             override fun onAddStream(stream: MediaStream?) {
                 Log.d(TAG, "onAddStream called: ${stream?.id}")
+                stream?.audioTracks?.forEach { audioTrack ->
+                    audioTrack.setEnabled(true)
+                    audioTrack.setVolume(10.0)
+                    Log.d(TAG, "Remote AudioTrack from stream enabled with full volume")
+                }
                 stream?.videoTracks?.firstOrNull()?.let { track ->
                     Log.d(TAG, "Found VideoTrack from stream: ${track.id()}")
                     remoteVideoTrack = track
@@ -248,6 +334,10 @@ class WebRtcManager(private val context: Context) {
                 if (track is VideoTrack) {
                     remoteVideoTrack = track
                     onRemoteTrackReceived?.invoke(track)
+                } else if (track is AudioTrack) {
+                    track.setEnabled(true)
+                    track.setVolume(10.0)
+                    Log.d(TAG, "Remote AudioTrack received, enabled with full volume")
                 }
             }
 
@@ -257,6 +347,10 @@ class WebRtcManager(private val context: Context) {
                 if (track is VideoTrack) {
                     remoteVideoTrack = track
                     onRemoteTrackReceived?.invoke(track)
+                } else if (track is AudioTrack) {
+                    track.setEnabled(true)
+                    track.setVolume(10.0)
+                    Log.d(TAG, "Remote AudioTrack received via onTrack, enabled with full volume")
                 }
             }
 
@@ -267,6 +361,9 @@ class WebRtcManager(private val context: Context) {
         }
 
         peerConnection = factory.createPeerConnection(rtcConfig, observer)
+
+        // Activate loudspeaker and communication audio routing
+        appAudioManager.start()
 
         // Add local tracks with explicit stream label for Unified Plan
         val streamIds = listOf("ARDAMS")
@@ -359,7 +456,7 @@ class WebRtcManager(private val context: Context) {
             renderer.init(eglBase.eglBaseContext, null)
             renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
             renderer.setMirror(isMirror)
-            renderer.setEnableHardwareScaler(false)
+            renderer.setEnableHardwareScaler(true)
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing SurfaceViewRenderer", e)
         }
@@ -367,6 +464,7 @@ class WebRtcManager(private val context: Context) {
 
     fun closePeerConnection() {
         try {
+            appAudioManager.stop()
             isRemoteDescriptionSet = false
             queuedRemoteCandidates.clear()
             peerConnection?.close()
