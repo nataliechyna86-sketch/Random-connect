@@ -191,9 +191,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onPermissionsGranted() {
+        webRtcManager.resumeCamera()
         if (!isLocalMediaStarted) {
             webRtcManager.startLocalMedia()
             isLocalMediaStarted = true
+        }
+    }
+
+    fun onResume() {
+        webRtcManager.resumeCamera()
+    }
+
+    fun onPause() {
+        if (_matchState.value is MatchState.Idle) {
+            webRtcManager.pauseCamera()
         }
     }
 
@@ -207,6 +218,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startMatchmaking() {
         onPermissionsGranted()
+        webRtcManager.resumeCamera()
         _chatMessages.value = emptyList()
         _floatingReactions.value = emptyList()
         _isChatDrawerOpen.value = false

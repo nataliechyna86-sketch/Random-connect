@@ -42,9 +42,10 @@ class SocketSignalingClient : SignalingClient {
             val uri = URI.create(serverUrl)
             val options = IO.Options().apply {
                 reconnection = true
-                reconnectionAttempts = 5
-                reconnectionDelay = 1000
-                timeout = 10000
+                reconnectionAttempts = 30
+                reconnectionDelay = 1500
+                reconnectionDelayMax = 5000
+                timeout = 45000
                 transports = arrayOf("websocket", "polling")
             }
 

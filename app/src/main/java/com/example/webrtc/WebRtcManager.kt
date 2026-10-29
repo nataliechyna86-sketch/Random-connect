@@ -265,18 +265,82 @@ class WebRtcManager(private val context: Context) {
         localVideoTrack?.setEnabled(enabled)
     }
 
+    fun resumeCamera() {
+        try {
+            if (videoCapturer != null && isVideoEnabled) {
+                videoCapturer?.startCapture(640, 480, 30)
+                Log.d(TAG, "Camera capturer resumed")
+            } else if (localVideoTrack == null) {
+                startLocalMedia()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error resuming camera, recreating capturer", e)
+            try {
+                restartLocalMedia()
+            } catch (e2: Exception) {
+                Log.e(TAG, "Failed to restart local media on resume", e2)
+            }
+        }
+    }
+
+    fun pauseCamera() {
+        try {
+            videoCapturer?.stopCapture()
+            Log.d(TAG, "Camera capturer paused")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error pausing camera", e)
+        }
+    }
+
+    fun restartLocalMedia() {
+        try {
+            videoCapturer?.stopCapture()
+            videoCapturer?.dispose()
+            videoCapturer = null
+
+            surfaceTextureHelper?.dispose()
+            surfaceTextureHelper = null
+
+            localVideoTrack?.dispose()
+            localVideoTrack = null
+
+            videoSource?.dispose()
+            videoSource = null
+
+            startLocalMedia()
+            Log.d(TAG, "Local media restarted with fresh capturer")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error restarting local media", e)
+        }
+    }
+
     fun createPeerConnection() {
         val factory = peerConnectionFactory ?: return
 
         closePeerConnection()
 
         val iceServers = listOf(
+            // Public STUN servers
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun3.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun4.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.relay.metered.ca:80").createIceServer()
+            PeerConnection.IceServer.builder("stun:openrelay.metered.ca:80").createIceServer(),
+
+            // Global TURN relay servers (critical for 4G/5G mobile cellular and Symmetric NAT traversal)
+            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80")
+                .setUsername("openrelayproject")
+                .setPassword("openrelayproject")
+                .createIceServer(),
+            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443")
+                .setUsername("openrelayproject")
+                .setPassword("openrelayproject")
+                .createIceServer(),
+            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
+                .setUsername("openrelayproject")
+                .setPassword("openrelayproject")
+                .createIceServer()
         )
 
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
