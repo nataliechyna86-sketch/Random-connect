@@ -18,7 +18,7 @@ const io = new Server(server, {
   transports: ["websocket", "polling"]
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // Matchmaking queues partitioned by interest topic ("All", "Gaming", etc.)
 const queues = new Map();
@@ -256,7 +256,7 @@ function removeFromAllQueues(socketId) {
   }
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`===============================================`);
   console.log(`RandomCam Signaling Server running on port ${PORT}`);
   console.log(`Ready for real-time WebRTC matchmaking!`);

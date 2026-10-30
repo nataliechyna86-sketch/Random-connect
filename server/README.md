@@ -24,33 +24,41 @@ Render provides free hosting with full WebSocket/Socket.IO support:
 
 ---
 
-## Option 2: Deploy for FREE on Google Cloud Run
+## Option 2: Deploy for FREE on Google Cloud Run (Recommended Over Render)
 
-Google Cloud Run has a permanent **Free Tier** (2 Million requests/month and 360,000 vCPU-seconds free every month):
+Google Cloud Run is significantly better than Render Free Tier because:
+- **No 15-minute sleep:** Cloud Run does not impose Render's 15-minute cold sleep.
+- **Permanent Free Tier:** 2,000,000 requests/month, 360,000 vCPU-seconds, and 180,000 GiB-seconds free every month forever.
+- **Built-in WebSockets & SSL:** Free automatic HTTPS certificate (`*.a.run.app`) and full WebSocket/Socket.IO support.
 
-### Using Google Cloud Console (Browser):
+### Method A: Using Google Cloud Console (Browser — No terminal needed)
 1. Go to [console.cloud.google.com/run](https://console.cloud.google.com/run).
 2. Click **Create Service**.
-3. Choose **Continuously deploy from a repository** (Cloud Build) and select your GitHub repo.
+3. Choose **Continuously deploy from a repository** (Cloud Build) and select your GitHub repository (`main` branch).
 4. In Build Configuration:
-   - Source directory: `/server`
-   - Build Type: `Dockerfile` (`/server/Dockerfile`)
+   - Build Type: **Dockerfile**
+   - Source location: `/` (uses root Dockerfile) or `/server` (uses server Dockerfile)
 5. In Service Configuration:
-   - Allow unauthenticated invocations (public).
-   - Port: `3000`
-   - In **Session Affinity** / **WebSockets**: Cloud Run supports WebSockets out of the box.
-6. Click **Create**. You'll receive a free HTTPS URL like:
-   `https://randomcam-signaling-xxxxxx.a.run.app`
+   - Service name: `randomcam-server`
+   - Region: Select a region with Free Tier (e.g., `us-central1` or `us-east1`)
+   - Authentication: Select **Allow unauthenticated invocations** (so mobile apps can connect)
+   - Under **Container, Networking, Security** → **Container**:
+     - Container port: `8080`
+   - Under **Settings** → **Request timeout**: Set to `3600` seconds (keeps WebSockets alive)
+   - Check **Session affinity** (ensures Socket.IO polling/websocket stickiness)
+6. Click **Create**.
+7. In ~60 seconds you will receive your free, permanent HTTPS URL:
+   `https://randomcam-server-xxxxxx-uc.a.run.app`
 
-### Using `gcloud` CLI (1 Command):
+### Method B: Using `gcloud` CLI (1 Command)
 ```bash
-cd server
 gcloud run deploy randomcam-server \
   --source . \
-  --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --port 3000
+  --port 8080 \
+  --timeout 3600 \
+  --session-affinity
 ```
 
 ---
