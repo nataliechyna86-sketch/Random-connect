@@ -244,7 +244,6 @@ fun LobbyScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(230.dp)
-                .clip(RoundedCornerShape(20.dp))
                 .border(1.5.dp, Color(0x3300E5FF), RoundedCornerShape(20.dp)),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = DarkNavySurface)

@@ -95,7 +95,8 @@ class WebRtcManager(private val context: Context) {
         PeerConnectionFactory.initialize(initOptions)
 
         val options = PeerConnectionFactory.Options()
-        val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
+        // Disable H.264 High Profile to ensure baseline compatibility on all Android chipsets and avoid MediaCodec black screens
+        val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, false)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
         val audioDeviceModule = try {
@@ -171,6 +172,7 @@ class WebRtcManager(private val context: Context) {
                         setEnabled(isVideoEnabled)
                     }
                     Log.d(TAG, "Local video track created successfully")
+                    attachLocalVideoTrackToPeer()
                 } else {
                     Log.e(TAG, "videoCapturer is null, cannot start local video")
                 }
@@ -180,20 +182,67 @@ class WebRtcManager(private val context: Context) {
         }
     }
 
-    private fun createCameraCapturer(): VideoCapturer? {
-        val enumerator: CameraEnumerator = try {
-            if (Camera2Enumerator.isSupported(context)) {
-                Log.d(TAG, "Using Camera2Enumerator")
-                Camera2Enumerator(context)
+    fun attachLocalVideoTrackToPeer() {
+        val pc = peerConnection ?: return
+        val track = localVideoTrack ?: return
+        try {
+            // Check transceivers first in Unified Plan
+            val videoTransceiver = pc.transceivers.firstOrNull {
+                it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO
+            }
+            if (videoTransceiver != null) {
+                videoTransceiver.sender.setTrack(track, true)
+                Log.d(TAG, "Attached localVideoTrack to video transceiver sender")
+                return
+            }
+
+            // Fallback to senders
+            val videoSender = pc.senders.firstOrNull {
+                it.track()?.kind() == "video"
+            }
+            if (videoSender != null) {
+                videoSender.setTrack(track, true)
+                Log.d(TAG, "Attached localVideoTrack to existing video sender")
             } else {
-                Log.d(TAG, "Camera2 not supported, falling back to Camera1Enumerator")
-                Camera1Enumerator(true)
+                pc.addTrack(track, listOf("ARDAMS"))
+                Log.d(TAG, "Added localVideoTrack via addTrack")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Error checking Camera2 support, using Camera1Enumerator", e)
-            Camera1Enumerator(true)
+            Log.e(TAG, "Error attaching local video track to peer", e)
+        }
+    }
+
+    private fun createCameraCapturer(): VideoCapturer? {
+        // Try Camera2Enumerator first
+        if (Camera2Enumerator.isSupported(context)) {
+            try {
+                val cam2 = Camera2Enumerator(context)
+                val capturer = findCameraCapturer(cam2)
+                if (capturer != null) {
+                    Log.d(TAG, "Created Camera2 capturer successfully")
+                    return capturer
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Camera2Enumerator failed, falling back to Camera1", e)
+            }
         }
 
+        // Reliable fallback to Camera1Enumerator
+        try {
+            val cam1 = Camera1Enumerator(true)
+            val capturer = findCameraCapturer(cam1)
+            if (capturer != null) {
+                Log.d(TAG, "Created Camera1 fallback capturer successfully")
+                return capturer
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Camera1Enumerator also failed", e)
+        }
+
+        return null
+    }
+
+    private fun findCameraCapturer(enumerator: CameraEnumerator): VideoCapturer? {
         val deviceNames = enumerator.deviceNames
         Log.d(TAG, "Available camera devices: ${deviceNames.joinToString()}")
 
@@ -229,7 +278,7 @@ class WebRtcManager(private val context: Context) {
             }
         }
 
-        // 3. Fallback to any camera available
+        // 3. Fallback to any available camera device
         for (deviceName in deviceNames) {
             try {
                 val capturer = enumerator.createCapturer(deviceName, null)
@@ -324,32 +373,23 @@ class WebRtcManager(private val context: Context) {
         closePeerConnection()
 
         val iceServers = listOf(
-            // Public STUN servers
+            // High-availability global STUN servers
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun3.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun4.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:openrelay.metered.ca:80").createIceServer(),
-
-            // Global TURN relay servers (critical for 4G/5G mobile cellular and Symmetric NAT traversal)
-            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80")
-                .setUsername("openrelayproject")
-                .setPassword("openrelayproject")
-                .createIceServer(),
-            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443")
-                .setUsername("openrelayproject")
-                .setPassword("openrelayproject")
-                .createIceServer(),
-            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
-                .setUsername("openrelayproject")
-                .setPassword("openrelayproject")
-                .createIceServer()
+            PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer(),
+            PeerConnection.IceServer.builder("stun:global.stun.twilio.com:3478").createIceServer()
         )
 
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
+            iceCandidatePoolSize = 2
         }
 
         val observer = object : PeerConnection.Observer {
@@ -526,6 +566,7 @@ class WebRtcManager(private val context: Context) {
         }, sdp)
     }
 
+    @Synchronized
     fun addRemoteIceCandidate(sdpMid: String, sdpMLineIndex: Int, sdp: String) {
         val candidate = IceCandidate(sdpMid, sdpMLineIndex, sdp)
         val pc = peerConnection
@@ -538,24 +579,34 @@ class WebRtcManager(private val context: Context) {
         }
     }
 
+    @Synchronized
     private fun drainQueuedCandidates() {
         isRemoteDescriptionSet = true
         val pc = peerConnection ?: return
         if (queuedRemoteCandidates.isNotEmpty()) {
-            Log.d(TAG, "Draining ${queuedRemoteCandidates.size} queued ICE candidates")
-            for (candidate in queuedRemoteCandidates) {
+            val toAdd = ArrayList(queuedRemoteCandidates)
+            queuedRemoteCandidates.clear()
+            Log.d(TAG, "Draining ${toAdd.size} queued ICE candidates")
+            for (candidate in toAdd) {
                 pc.addIceCandidate(candidate)
             }
-            queuedRemoteCandidates.clear()
         }
     }
 
     fun setupSurfaceRenderer(renderer: SurfaceViewRenderer, isMirror: Boolean) {
         try {
-            renderer.init(eglBase.eglBaseContext, null)
+            renderer.init(eglBase.eglBaseContext, object : RendererCommon.RendererEvents {
+                override fun onFirstFrameRendered() {
+                    Log.i(TAG, "WebRTC First frame rendered successfully (isMirror=$isMirror)")
+                }
+                override fun onFrameResolutionChanged(videoWidth: Int, videoHeight: Int, rotation: Int) {
+                    Log.i(TAG, "WebRTC frame resolution: ${videoWidth}x${videoHeight}, rot: $rotation")
+                }
+            })
             renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
             renderer.setMirror(isMirror)
-            renderer.setEnableHardwareScaler(true)
+            // Critical for Jetpack Compose: false ensures holder matches Compose layout constraints
+            renderer.setEnableHardwareScaler(false)
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing SurfaceViewRenderer", e)
         }

@@ -126,7 +126,6 @@ fun VideoChatScreen(
                 .statusBarsPadding()
                 .padding(top = 70.dp, end = 16.dp)
                 .size(width = 110.dp, height = 150.dp)
-                .clip(RoundedCornerShape(16.dp))
                 .border(2.dp, NeonCyan, RoundedCornerShape(16.dp)),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = DarkNavyElevated)
