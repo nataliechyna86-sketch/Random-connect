@@ -58,6 +58,7 @@ import com.example.ui.theme.DarkNavySurface
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGreen
 import com.example.ui.theme.NeonRose
+import com.example.ui.theme.NeonViolet
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
@@ -157,6 +158,13 @@ fun ServerSettingsDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
+                val (statusText, statusColor) = when {
+                    useSandbox -> Pair("Interactive Sandbox Simulation", NeonViolet)
+                    currentConfig.isConnected -> Pair("Connected to Live Server", NeonGreen)
+                    currentConfig.isConnecting -> Pair("Connecting to Server...", Color(0xFFFFA726))
+                    else -> Pair("Server Disconnected / Waking Up", NeonRose)
+                }
+
                 // Connection status pill
                 Row(
                     modifier = Modifier
@@ -167,24 +175,32 @@ fun ServerSettingsDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (useSandbox) "Sandbox Mode Active" else if (currentConfig.isConnected) "Connected to Socket" else "Disconnected",
+                            text = statusText,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (useSandbox || currentConfig.isConnected) NeonGreen else NeonRose
+                            color = statusColor
                         )
                         Text(
-                            text = if (useSandbox) "Interactive smart stranger simulation" else currentConfig.serverUrl,
+                            text = if (useSandbox) "Simulated partner response (local demo)" else currentConfig.serverUrl,
                             fontSize = 11.sp,
                             color = TextSecondary
                         )
+                        if (!useSandbox && currentConfig.connectionError != null) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Notice: ${currentConfig.connectionError}",
+                                fontSize = 10.sp,
+                                color = Color(0xFFFFB4AB)
+                            )
+                        }
                     }
                     Box(
                         modifier = Modifier
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(if (useSandbox || currentConfig.isConnected) NeonGreen else NeonRose)
+                            .background(statusColor)
                     )
                 }
 
@@ -204,7 +220,7 @@ fun ServerSettingsDialog(
                             color = TextPrimary
                         )
                         Text(
-                            text = "Test instant video matching, chat, and skipping immediately without setting up a backend server",
+                            text = "Enable only for offline testing without a backend server",
                             fontSize = 11.sp,
                             color = TextSecondary
                         )
@@ -224,7 +240,7 @@ fun ServerSettingsDialog(
 
                 // Socket.io URL input
                 Text(
-                    text = "Socket.io Server URL",
+                    text = "Live Server URL (Cloud Run or Render)",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     color = TextSecondary
@@ -233,7 +249,7 @@ fun ServerSettingsDialog(
                 OutlinedTextField(
                     value = urlText,
                     onValueChange = { urlText = it },
-                    placeholder = { Text("e.g. http://10.0.2.2:3000", color = TextSecondary) },
+                    placeholder = { Text("https://random-connect.onrender.com", color = TextSecondary) },
                     singleLine = true,
                     enabled = !useSandbox,
                     colors = OutlinedTextFieldDefaults.colors(

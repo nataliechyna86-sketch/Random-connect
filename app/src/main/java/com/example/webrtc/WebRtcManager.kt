@@ -1,6 +1,8 @@
 package com.example.webrtc
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -14,6 +16,7 @@ import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
+import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RendererCommon
@@ -36,6 +39,7 @@ class WebRtcManager(private val context: Context) {
 
     val eglBase: EglBase by lazy { EglBase.create() }
     val appAudioManager by lazy { AppAudioManager(context) }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var peerConnectionFactory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
@@ -381,8 +385,11 @@ class WebRtcManager(private val context: Context) {
                 }
                 stream?.videoTracks?.firstOrNull()?.let { track ->
                     Log.d(TAG, "Found VideoTrack from stream: ${track.id()}")
-                    remoteVideoTrack = track
-                    onRemoteTrackReceived?.invoke(track)
+                    track.setEnabled(true)
+                    mainHandler.post {
+                        remoteVideoTrack = track
+                        onRemoteTrackReceived?.invoke(track)
+                    }
                 }
             }
 
@@ -396,8 +403,11 @@ class WebRtcManager(private val context: Context) {
                 val track = receiver?.track()
                 Log.d(TAG, "onAddTrack called: ${track?.kind()} id: ${track?.id()}")
                 if (track is VideoTrack) {
-                    remoteVideoTrack = track
-                    onRemoteTrackReceived?.invoke(track)
+                    track.setEnabled(true)
+                    mainHandler.post {
+                        remoteVideoTrack = track
+                        onRemoteTrackReceived?.invoke(track)
+                    }
                 } else if (track is AudioTrack) {
                     track.setEnabled(true)
                     track.setVolume(10.0)
@@ -409,8 +419,11 @@ class WebRtcManager(private val context: Context) {
                 val track = transceiver?.receiver?.track()
                 Log.d(TAG, "onTrack called: ${track?.kind()} id: ${track?.id()}")
                 if (track is VideoTrack) {
-                    remoteVideoTrack = track
-                    onRemoteTrackReceived?.invoke(track)
+                    track.setEnabled(true)
+                    mainHandler.post {
+                        remoteVideoTrack = track
+                        onRemoteTrackReceived?.invoke(track)
+                    }
                 } else if (track is AudioTrack) {
                     track.setEnabled(true)
                     track.setVolume(10.0)
@@ -420,7 +433,9 @@ class WebRtcManager(private val context: Context) {
 
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
                 Log.d(TAG, "PeerConnection State: $newState")
-                newState?.let { onConnectionStateChanged?.invoke(it) }
+                newState?.let {
+                    mainHandler.post { onConnectionStateChanged?.invoke(it) }
+                }
             }
         }
 
@@ -429,10 +444,30 @@ class WebRtcManager(private val context: Context) {
         // Activate loudspeaker and communication audio routing
         appAudioManager.start()
 
+        // Ensure local media is initialized before adding tracks
+        if (localVideoTrack == null || localAudioTrack == null) {
+            startLocalMedia()
+        }
+
         // Add local tracks with explicit stream label for Unified Plan
         val streamIds = listOf("ARDAMS")
-        localVideoTrack?.let { peerConnection?.addTrack(it, streamIds) }
-        localAudioTrack?.let { peerConnection?.addTrack(it, streamIds) }
+        if (localAudioTrack != null) {
+            peerConnection?.addTrack(localAudioTrack, streamIds)
+        } else {
+            peerConnection?.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
+            )
+        }
+
+        if (localVideoTrack != null) {
+            peerConnection?.addTrack(localVideoTrack, streamIds)
+        } else {
+            peerConnection?.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+                RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV)
+            )
+        }
     }
 
     fun createOffer(onOfferCreated: (SessionDescription) -> Unit) {
@@ -533,7 +568,9 @@ class WebRtcManager(private val context: Context) {
             queuedRemoteCandidates.clear()
             peerConnection?.close()
             peerConnection = null
-            remoteVideoTrack = null
+            mainHandler.post {
+                remoteVideoTrack = null
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error closing peer connection", e)
         }

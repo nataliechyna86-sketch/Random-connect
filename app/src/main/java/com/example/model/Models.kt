@@ -39,9 +39,11 @@ data class FloatingReaction(
 )
 
 data class ServerConfig(
-    val serverUrl: String = "http://10.0.2.2:3000",
-    val useSandboxFallback: Boolean = true,
+    val serverUrl: String = "https://random-connect.onrender.com",
+    val useSandboxFallback: Boolean = false,
     val isConnected: Boolean = false,
+    val isConnecting: Boolean = false,
+    val connectionError: String? = null,
     val lastPingMs: Long = -1,
     val onlineUsersCount: Int = 1842
 )

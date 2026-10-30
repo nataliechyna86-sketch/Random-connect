@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +26,10 @@ import java.util.UUID
 import kotlin.random.Random
 
 private const val TAG = "MainViewModel"
+private const val PREFS_NAME = "randomcam_prefs"
+private const val KEY_SERVER_URL = "server_url"
+private const val KEY_USE_SANDBOX = "use_sandbox"
+private const val DEFAULT_SERVER_URL = "https://random-connect.onrender.com"
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -32,16 +37,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val socketClient = SocketSignalingClient()
     private val sandboxClient = SandboxSignalingClient()
-    private var activeSignaling: SignalingClient = sandboxClient
+    private var activeSignaling: SignalingClient = socketClient
 
     private val _matchState = MutableStateFlow<MatchState>(MatchState.Idle)
     val matchState: StateFlow<MatchState> = _matchState.asStateFlow()
 
     private val _serverConfig = MutableStateFlow(
         ServerConfig(
-            serverUrl = "http://10.0.2.2:3000",
-            useSandboxFallback = true,
-            isConnected = true,
+            serverUrl = DEFAULT_SERVER_URL,
+            useSandboxFallback = false,
+            isConnected = false,
+            isConnecting = true,
             onlineUsersCount = 1842
         )
     )
@@ -71,6 +77,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         setupSignalingCallbacks(socketClient)
         setupWebRtcCallbacks()
 
+        // Load persisted server preferences
+        val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+        val savedSandbox = prefs.getBoolean(KEY_USE_SANDBOX, false)
+
+        _serverConfig.value = ServerConfig(
+            serverUrl = savedUrl,
+            useSandboxFallback = savedSandbox,
+            isConnected = false,
+            isConnecting = !savedSandbox,
+            onlineUsersCount = 1842
+        )
+
+        if (savedSandbox) {
+            useSandboxMode()
+        } else {
+            connectToSocketServer(savedUrl)
+        }
+
         // Periodically fluctuate online users counter for realistic live feel
         viewModelScope.launch {
             while (isActive) {
@@ -86,22 +111,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun setupSignalingCallbacks(client: SignalingClient) {
         client.onConnected = {
             if (activeSignaling === client) {
-                _serverConfig.update { it.copy(isConnected = true) }
+                Log.i(TAG, "Signaling connected successfully")
+                _serverConfig.update { it.copy(isConnected = true, isConnecting = false, connectionError = null) }
             }
         }
 
         client.onDisconnected = {
             if (activeSignaling === client) {
-                _serverConfig.update { it.copy(isConnected = false) }
+                Log.i(TAG, "Signaling disconnected")
+                _serverConfig.update { it.copy(isConnected = false, isConnecting = false) }
             }
         }
 
         client.onConnectionError = { error ->
             Log.w(TAG, "Signaling connection error: $error")
-            if (activeSignaling === socketClient && _serverConfig.value.useSandboxFallback) {
-                // Seamless fallback to sandbox if socket server unreachable
-                Log.i(TAG, "Falling back to Sandbox mode")
-                useSandboxMode()
+            if (activeSignaling === socketClient) {
+                if (_serverConfig.value.useSandboxFallback) {
+                    Log.i(TAG, "Falling back to Sandbox mode as configured")
+                    useSandboxMode()
+                } else {
+                    _serverConfig.update {
+                        it.copy(
+                            isConnected = false,
+                            isConnecting = false,
+                            connectionError = error
+                        )
+                    }
+                }
             }
         }
 
@@ -114,6 +150,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             stopTimer()
             currentCallRoomId = roomId
             _matchState.update { MatchState.Connecting(roomId, stranger) }
+
+            // Ensure camera and audio tracks are active before WebRTC negotiation
+            onPermissionsGranted()
 
             // WebRTC peer setup
             webRtcManager.createPeerConnection()
@@ -222,6 +261,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _chatMessages.value = emptyList()
         _floatingReactions.value = emptyList()
         _isChatDrawerOpen.value = false
+
+        val config = _serverConfig.value
+        if (!config.useSandboxFallback && !activeSignaling.isConnected) {
+            connectToSocketServer(config.serverUrl)
+        }
 
         _matchState.update { MatchState.Searching(_selectedTopic.value, 0) }
         startSearchingTimer()
@@ -333,21 +377,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateServerConfig(url: String, useSandbox: Boolean) {
-        _serverConfig.update { it.copy(serverUrl = url, useSandboxFallback = useSandbox) }
+        val cleanUrl = url.trim().removeSuffix("/")
+        val prefs = getApplication<Application>().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(KEY_SERVER_URL, cleanUrl)
+            .putBoolean(KEY_USE_SANDBOX, useSandbox)
+            .apply()
+
+        _serverConfig.update {
+            it.copy(
+                serverUrl = cleanUrl,
+                useSandboxFallback = useSandbox,
+                connectionError = null,
+                isConnecting = !useSandbox,
+                isConnected = false
+            )
+        }
+
         if (useSandbox) {
             useSandboxMode()
         } else {
-            activeSignaling.disconnect()
-            activeSignaling = socketClient
-            socketClient.connect(url)
+            connectToSocketServer(cleanUrl)
         }
+    }
+
+    private fun connectToSocketServer(url: String) {
+        _serverConfig.update { it.copy(isConnecting = true, connectionError = null) }
+        activeSignaling.disconnect()
+        activeSignaling = socketClient
+        socketClient.connect(url)
     }
 
     private fun useSandboxMode() {
         activeSignaling.disconnect()
         activeSignaling = sandboxClient
         sandboxClient.connect("")
-        _serverConfig.update { it.copy(isConnected = true) }
+        _serverConfig.update { it.copy(isConnected = true, isConnecting = false, connectionError = null) }
     }
 
     private fun startSearchingTimer() {

@@ -52,7 +52,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun LocalVideoSurfaceView(
     webRtcManager: WebRtcManager,
     isVideoOff: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isOverlay: Boolean = false
 ) {
     val localTrack by webRtcManager.localVideoTrackState.collectAsStateWithLifecycle()
 
@@ -66,21 +67,32 @@ fun LocalVideoSurfaceView(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
-                        // Critical: PIP overlay must be on top of the remote video SurfaceView
-                        setZOrderMediaOverlay(true)
-                        setZOrderOnTop(true)
+                        // Never call setZOrderOnTop(true) - it creates window artifacts.
+                        // Only setZOrderMediaOverlay(true) for floating PIP overlays.
+                        setZOrderMediaOverlay(isOverlay)
                         webRtcManager.setupSurfaceRenderer(this, isMirror = true)
                         localTrack?.addSink(this)
+                        tag = localTrack
                     }
                 },
                 update = { renderer ->
                     renderer.setMirror(true)
+                    val prevTrack = renderer.tag as? VideoTrack
+                    if (prevTrack != localTrack) {
+                        try {
+                            prevTrack?.removeSink(renderer)
+                        } catch (_: Exception) {}
+                        localTrack?.addSink(renderer)
+                        renderer.tag = localTrack
+                    }
                 },
                 onRelease = { renderer ->
                     try {
-                        localTrack?.removeSink(renderer)
+                        val attached = renderer.tag as? VideoTrack
+                        attached?.removeSink(renderer)
                         renderer.release()
                     } catch (_: Exception) {}
+                    renderer.tag = null
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -124,16 +136,27 @@ fun RemoteVideoSurfaceView(
                         setZOrderMediaOverlay(false)
                         webRtcManager.setupSurfaceRenderer(this, isMirror = false)
                         remoteTrack?.addSink(this)
+                        tag = remoteTrack
                     }
                 },
                 update = { renderer ->
                     renderer.setMirror(false)
+                    val prevTrack = renderer.tag as? VideoTrack
+                    if (prevTrack != remoteTrack) {
+                        try {
+                            prevTrack?.removeSink(renderer)
+                        } catch (_: Exception) {}
+                        remoteTrack?.addSink(renderer)
+                        renderer.tag = remoteTrack
+                    }
                 },
                 onRelease = { renderer ->
                     try {
-                        remoteTrack?.removeSink(renderer)
+                        val attached = renderer.tag as? VideoTrack
+                        attached?.removeSink(renderer)
                         renderer.release()
                     } catch (_: Exception) {}
+                    renderer.tag = null
                 },
                 modifier = Modifier.fillMaxSize()
             )

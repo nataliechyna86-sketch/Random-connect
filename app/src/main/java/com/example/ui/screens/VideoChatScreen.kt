@@ -135,6 +135,7 @@ fun VideoChatScreen(
                 LocalVideoSurfaceView(
                     webRtcManager = webRtcManager,
                     isVideoOff = isVideoOff,
+                    isOverlay = true,
                     modifier = Modifier.fillMaxSize()
                 )
 

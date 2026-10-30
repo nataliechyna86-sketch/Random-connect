@@ -64,6 +64,7 @@ import com.example.ui.theme.DarkNavyElevated
 import com.example.ui.theme.DarkNavySurface
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGreen
+import com.example.ui.theme.NeonRose
 import com.example.ui.theme.NeonViolet
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -154,15 +155,28 @@ fun LobbyScreen(
                     .padding(horizontal = 10.dp, vertical = 6.dp)
                     .testTag("server_settings_button")
             ) {
+                val statusColor = when {
+                    serverConfig.useSandboxFallback -> NeonViolet
+                    serverConfig.isConnected -> NeonGreen
+                    serverConfig.isConnecting -> Color(0xFFFFA726)
+                    else -> NeonRose
+                }
+                val statusText = when {
+                    serverConfig.useSandboxFallback -> "Sandbox Mode"
+                    serverConfig.isConnected -> "${serverConfig.onlineUsersCount} online"
+                    serverConfig.isConnecting -> "Connecting..."
+                    else -> "Server Offline"
+                }
+
                 Box(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(if (serverConfig.isConnected || serverConfig.useSandboxFallback) NeonGreen else Color.Gray)
+                        .background(statusColor)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "${serverConfig.onlineUsersCount} online",
+                    text = statusText,
                     fontSize = 12.sp,
                     color = TextPrimary,
                     fontWeight = FontWeight.Medium
